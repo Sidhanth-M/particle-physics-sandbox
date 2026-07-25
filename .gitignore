@@ -1,0 +1,5 @@
+# Agent tooling state, not project source
+.impeccable/
+
+# Playwright MCP scratch output (snapshots, console logs, screenshots)
+.playwright-mcp/

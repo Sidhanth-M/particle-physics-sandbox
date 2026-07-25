@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="dark">
+<title>Particle Physics Sandbox</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2307080c'/%3E%3Crect x='3' y='9' width='4' height='4' fill='%23f4d35e'/%3E%3Crect x='9' y='4' width='4' height='4' fill='%233b82f6'/%3E%3C/svg%3E">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #sim{ image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; }
+  .chip .dot{ width:9px; height:9px; border-radius:3px; background:var(--c); box-shadow:0 0 8px var(--c); flex:none; }
+  .chip.active{ border-color:var(--c); color:#fff; background:rgba(255,255,255,.07); box-shadow:0 0 0 1px var(--c), 0 0 18px -6px var(--c); }
+  .tool-btn.active{ border-color:#f59e0b; color:#fff; background:rgba(245,158,11,.12); }
+  .kbd{ display:inline-block; min-width:1.3em; text-align:center; padding:.08rem .3rem; border-radius:.3rem; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-bottom-width:2px; font-size:.65rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#cbd5e1; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; height:5px; border-radius:9999px; background:linear-gradient(90deg, rgba(251,191,36,.85), rgba(251,146,60,.85)); outline:none; cursor:pointer; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid #f59e0b; cursor:grab; }
+  input[type=range]::-moz-range-thumb{ width:16px; height:16px; border-radius:50%; background:#fff; border:3px solid #f59e0b; cursor:grab; }
+  #brushRing{ position:absolute; pointer-events:none; border:1.5px solid #f4d35e; border-radius:9999px; transform:translate(-50%,-50%); display:none; }
+  #brushRing.square{ border-radius:2px; }
+  /* field tools (heat, wind, well…) get a dashed ring, so the cursor itself
+     says whether this tool places material or acts on what is already there */
+  #brushRing.field{ border-style:dashed; border-width:2px; }
+  /* `contain` is the fix for reaching the end of the material list and having
+     the whole page start scrolling instead. */
+  .panel-scroll{ scrollbar-width:thin; scrollbar-color:rgba(148,163,184,.3) transparent; overscroll-behavior:contain; }
+  .panel-scroll::-webkit-scrollbar{ width:8px; }
+  .panel-scroll::-webkit-scrollbar-thumb{ background:rgba(148,163,184,.25); border-radius:9999px; }
+  .rail-btn{ display:grid; place-items:center; width:100%; aspect-ratio:1; border-radius:.5rem; border:1px solid transparent; color:#94a3b8; transition:.12s; }
+  .rail-btn:hover{ background:rgba(255,255,255,.07); color:#e2e8f0; }
+  .rail-btn.active{ border-color:#f59e0b; color:#fbbf24; background:rgba(245,158,11,.14); }
+  .rail-btn svg{ width:18px; height:18px; }
+  /* Opaque in plain CSS, not Tailwind: `bg-[#0a0c12]/98` does not generate on the
+     CDN build, and a see-through drawer double-exposes the panel underneath it. */
+  #sceneDrawer{ background:#0a0c12; }
+  body.fullscreen header, body.fullscreen footer{ display:none; }
+  body.fullscreen main{ max-width:none; padding:0; gap:0; height:100vh; }
+</style>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-200 antialiased overflow-x-hidden">
+
+<div class="fixed inset-0 -z-10 pointer-events-none">
+  <div class="absolute inset-0 bg-slate-950"></div>
+  <div class="absolute -top-40 left-1/2 -translate-x-1/2 w-[60rem] h-[60rem] rounded-full bg-amber-500/[0.06] blur-3xl"></div>
+  <div class="absolute -bottom-60 -right-40 w-[50rem] h-[50rem] rounded-full bg-sky-500/[0.05] blur-3xl"></div>
+</div>
+
+<header class="max-w-[100rem] mx-auto px-4 pt-8 pb-4 text-center">
+  <p class="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500 mb-2">Cellular Automata &middot; Heat &middot; Chemistry &middot; Current</p>
+  <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-amber-200">Particle Physics Sandbox</h1>
+  <p class="mt-2 text-sm text-slate-400 max-w-3xl mx-auto">Every material reacts to one shared temperature field and one charge field, so ice melts, wood catches, lava freezes and brine boils dry wherever the physics says it should &mdash; none of it is scripted.</p>
+</header>
+
+<main class="max-w-[100rem] mx-auto px-4 pb-10 flex flex-col lg:flex-row gap-4 items-stretch">
+
+  <section class="flex-1 min-w-0 rounded-2xl border border-white/10 bg-[#07080c] shadow-2xl shadow-black/70 overflow-hidden flex flex-col">
+    <div class="flex-1 flex items-center">
+      <div id="stage" class="relative w-full">
+        <canvas id="sim" width="480" height="300" class="block w-full h-auto cursor-none select-none"></canvas>
+        <div id="brushRing"></div>
+        <div id="pausedBadge" class="hidden absolute top-3 left-3 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-amber-400/40 text-[11px] font-bold tracking-[0.2em] uppercase text-amber-300">&#10074;&#10074; Paused</div>
+        <!-- what is armed, readable without looking away from the canvas -->
+        <div id="toolBadge" class="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-white/15 text-[11px] font-semibold text-slate-200 flex items-center gap-1.5 pointer-events-none">
+          <span id="toolBadgeIcon" class="text-amber-300 flex"></span>
+          <span id="toolBadgeName">Paint</span>
+          <span id="toolBadgeMat" class="inline-flex items-center gap-1 pl-1.5 ml-0.5 border-l border-white/15 text-slate-400"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- live inspector: what is actually under the cursor -->
+    <div class="flex items-center gap-4 px-4 py-2 border-t border-white/5 text-[11px] font-mono flex-wrap">
+      <span class="text-slate-500">Under cursor</span>
+      <span class="inline-flex items-center gap-1.5">
+        <span id="inspDot" class="inline-block w-2.5 h-2.5 rounded-sm bg-slate-700"></span>
+        <span id="inspMat" class="text-slate-200">&mdash;</span>
+      </span>
+      <span class="text-slate-500">cat <span id="inspCat" class="text-slate-300">&mdash;</span></span>
+      <span class="text-slate-500">temp <span id="inspTemp" class="text-amber-300">&mdash;</span></span>
+      <span class="text-slate-500">charge <span id="inspCharge" class="text-sky-300">&mdash;</span></span>
+      <span class="text-slate-500">at <span id="inspXY" class="text-slate-300">&mdash;</span></span>
+    </div>
+
+    <div class="flex items-center justify-between gap-3 px-4 py-2 border-t border-white/5 text-[11px] font-mono text-slate-500 flex-wrap">
+      <span><span class="text-slate-300" id="fpsVal">60</span> fps</span>
+      <span><span class="text-slate-300" id="msVal">0.0</span> ms</span>
+      <span><span class="text-slate-300" id="countVal">0</span> cells</span>
+      <span><span class="text-slate-300" id="partVal">0</span> debris</span>
+      <span><span class="text-slate-300" id="chunkVal">0</span> chunks</span>
+      <span class="hidden sm:inline" id="gridVal">480 &times; 300</span>
+      <span class="hidden sm:inline text-slate-600" id="rendererVal">&mdash;</span>
+    </div>
+  </section>
+
+  <aside class="w-full lg:w-[22rem] shrink-0 rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm flex max-h-[80vh] overflow-hidden relative">
+
+    <!-- Tool rail. Always on screen, so arming a tool never hides the materials
+         and the materials never hide the tool you are holding. -->
+    <nav id="toolRail" class="panel-scroll w-12 shrink-0 border-r border-white/10 overflow-y-auto flex flex-col gap-1 p-1.5"></nav>
+
+    <div class="flex-1 min-w-0 flex flex-col">
+      <div class="p-3 pb-2">
+        <input id="matSearch" type="search" placeholder="Search materials…" autocomplete="off"
+               class="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-amber-400/50">
+      </div>
+      <div id="matGroups" class="panel-scroll flex-1 overflow-y-auto px-3 pb-3 flex flex-col gap-3"></div>
+
+      <!-- Armed tool + its options. Never behind a tab. -->
+      <div class="border-t border-white/10 p-3 flex flex-col gap-2">
+        <div class="flex items-baseline justify-between gap-2">
+          <span id="toolName" class="text-[12px] font-semibold text-amber-200">Paint</span>
+          <span id="toolReach" class="text-[10px] font-mono text-slate-500"></span>
+        </div>
+        <p id="toolHint" class="text-[10px] text-slate-500 leading-snug"></p>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Size</span>
+            <span id="brushVal" class="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[11px] font-mono text-amber-300">3</span>
+          </div>
+          <input id="brush" type="range" min="1" max="16" step="1" value="3" class="w-full">
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-500">Scatter</span>
+            <span id="scatterVal" class="px-1.5 py-0.5 rounded bg-white/[0.06] border border-white/10 text-[11px] font-mono text-amber-300">62%</span>
+          </div>
+          <input id="scatter" type="range" min="10" max="100" step="1" value="62" class="w-full">
+        </div>
+
+        <div class="grid grid-cols-4 gap-1">
+          <button id="shapeBtn" class="px-1 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300 hover:bg-white/[0.08] transition">Circle</button>
+          <button id="symXBtn" class="px-1 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300 hover:bg-white/[0.08] transition">Mir X</button>
+          <button id="symYBtn" class="px-1 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300 hover:bg-white/[0.08] transition">Mir Y</button>
+          <button id="fsBtn" class="px-1 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] text-[11px] text-slate-300 hover:bg-white/[0.08] transition">Full</button>
+        </div>
+        <div class="grid grid-cols-2 gap-1">
+          <button id="sceneBtn" class="px-2 py-2 rounded-lg border border-amber-400/25 bg-amber-500/[0.08] text-[12px] font-semibold text-amber-200 hover:bg-amber-500/[0.16] transition">Scene</button>
+          <button id="codexBtn" class="px-2 py-2 rounded-lg border border-sky-400/25 bg-sky-500/[0.08] text-[12px] font-semibold text-sky-200 hover:bg-sky-500/[0.16] transition">Guide</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scene drawer: slides over the panel rather than replacing it -->
+    <div id="sceneDrawer" class="hidden absolute inset-0 z-20 flex flex-col">
+      <div class="flex items-center justify-between px-3 py-2.5 border-b border-white/10 shrink-0">
+        <h2 class="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-400">Scene</h2>
+        <button id="sceneClose" class="w-7 h-7 grid place-items-center rounded-md border border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.08] transition">&#10005;</button>
+      </div>
+      <div class="panel-scroll flex-1 overflow-y-auto p-3 flex flex-col gap-4">
+        <div>
+          <h3 class="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 mb-2">View</h3>
+          <div id="viewGrid" class="grid grid-cols-2 gap-1.5"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <h3 class="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500">Sim speed</h3>
+            <span id="speedVal" class="px-2 py-0.5 rounded bg-white/[0.06] border border-white/10 text-xs font-mono text-amber-300">1.0&times;</span>
+          </div>
+          <input id="speed" type="range" min="25" max="400" step="25" value="100" class="w-full">
+        </div>
+        <div class="grid grid-cols-3 gap-1.5">
+          <button id="pauseBtn" class="px-2 py-2.5 rounded-lg text-sm font-semibold bg-emerald-500/10 border border-emerald-400/30 text-emerald-300 hover:bg-emerald-500/20 transition">&#10074;&#10074;</button>
+          <button id="stepBtn" class="px-2 py-2.5 rounded-lg text-sm font-semibold bg-sky-500/10 border border-sky-400/30 text-sky-300 hover:bg-sky-500/20 transition">&#9654;&#10074;</button>
+          <button id="clearBtn" class="px-2 py-2.5 rounded-lg text-sm font-semibold bg-rose-500/10 border border-rose-400/30 text-rose-300 hover:bg-rose-500/20 transition">&#10005;</button>
+        </div>
+        <div id="sceneExtra" class="flex flex-col gap-3"></div>
+        <div class="border-t border-white/10 pt-3 text-[10px] text-slate-500 leading-relaxed">
+          <span class="kbd">1</span>&ndash;<span class="kbd">9</span> materials
+          <span class="kbd">Q</span>/<span class="kbd">E</span> tool
+          <span class="kbd">Space</span> pause
+          <span class="kbd">.</span> step
+          <span class="kbd">[</span><span class="kbd">]</span> size
+          <span class="kbd">X</span>/<span class="kbd">Y</span> mirror
+          <span class="kbd">F</span> fullscreen
+          <span class="kbd">?</span> guide
+          <span class="kbd">Esc</span> close
+          &middot; right-drag erases
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- Guide. Every factual entry is generated from the material and reaction
+     tables at runtime, so it cannot drift out of step with the simulation. -->
+<div id="codexModal" class="hidden fixed inset-0 z-40 items-start justify-center p-4 sm:p-8 overflow-y-auto">
+  <div id="codexBackdrop" class="fixed inset-0 bg-black/70 backdrop-blur-sm"></div>
+  <div class="relative w-full max-w-3xl rounded-2xl border border-white/10 shadow-2xl shadow-black/80 flex flex-col max-h-[86vh]" style="background:#0b0d13">
+    <div class="flex items-center gap-3 px-4 py-3 border-b border-white/10 shrink-0">
+      <div class="flex-1 min-w-0">
+        <h2 class="text-sm font-bold text-amber-200">Guide</h2>
+        <p class="text-[11px] text-slate-500">Read straight out of the simulation's own tables.</p>
+      </div>
+      <button id="codexClose" class="w-8 h-8 grid place-items-center rounded-md border border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.08] transition">&#10005;</button>
+    </div>
+    <div class="px-4 pt-3 shrink-0">
+      <input id="codexSearch" type="search" placeholder="Search interactions, materials, temperatures…" autocomplete="off"
+             class="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-amber-400/50">
+    </div>
+    <div id="codexBody" class="panel-scroll flex-1 overflow-y-auto p-4 flex flex-col gap-5"></div>
+  </div>
+</div>
+
+<footer class="max-w-[100rem] mx-auto px-4 pb-8 text-center text-[11px] text-slate-600">
+  Vanilla JS &middot; ES modules &middot; WebGL2 &middot; chunk-activated cellular automata
+</footer>
+
+<!-- ponytail: ES modules are blocked over file://, so main.js never runs and the page
+     looks broken-but-silent. Classic script, so this one still executes there. -->
+<script>
+if (location.protocol === 'file:') {
+  document.body.insertAdjacentHTML('afterbegin',
+    '<div style="position:fixed;inset:0;z-index:99;display:grid;place-items:center;' +
+    'background:#0b1120;color:#fbbf24;font:14px/1.7 ui-monospace,monospace;text-align:center;padding:2rem">' +
+    '<div>Opened from disk &mdash; ES modules need a web server.<br><br>' +
+    '<code style="color:#e2e8f0">python serve.py 8011</code><br>' +
+    'then open <code style="color:#e2e8f0">http://localhost:8011</code></div></div>');
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
