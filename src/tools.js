@@ -6,12 +6,10 @@
  * tool only has to say what it does to one cell.
  */
 
-import { G, setCell, clearCell, swapCells, wakeAt, AMBIENT } from './grid.js';
+import { G, setCell, clearCell, swapCells, wakeAt } from './grid.js';
 import {
-  CAT, CATEGORY, FLAMMABILITY, IS_FLUID, DENSITY, STAMP,
-  EMPTY, SAND, EMITTER, SWITCH, FAN,
+  CAT, CATEGORY, FLAMMABILITY, IS_FLUID, DENSITY, STAMP, EMPTY, SAND, EMITTER,
 } from './materials.js';
-import { SWITCH_OPEN } from './electric.js';
 import { explode } from './explosions.js';
 import { spawnParticle } from './particles.js';
 import { drawStamp, stampSpan } from './stamps.js';
@@ -166,33 +164,6 @@ function pourAt(cx, cy, t) {
     }
     paintCell(i, t);
   });
-}
-
-/* ---------------------------- component state ---------------------------- */
-
-/**
- * Clicking a component that is ALREADY THERE adjusts it instead of repainting
- * it: a switch flips, a fan rotates. Only fires when the same material is
- * selected, so it can never surprise you while painting something else — the
- * falling-sand convention, and it avoids adding a mode to an app whose whole
- * problem was unlabelled modes.
- */
-function tryAdjust(cx, cy) {
-  const t = tool.material;
-  if (t !== SWITCH && t !== FAN) return false;
-  if (G.mat[cy * G.w + cx] !== t) return false;   // empty space still paints
-
-  brush(cx, cy, (i, x, y) => {
-    if (G.mat[i] !== t) return;
-    if (t === SWITCH) {
-      G.aux[i] = G.aux[i] === SWITCH_OPEN ? 0 : SWITCH_OPEN;
-      G.charge[i] = 0;
-    } else {
-      G.aux[i] = (G.aux[i] + 1) & 3;
-    }
-    wakeAt(x, y);
-  });
-  return true;
 }
 
 /* ------------------------------ field tools ------------------------------ */
@@ -389,7 +360,6 @@ export function toolDown(x, y, erase) {
   const t = erase ? EMPTY : tool.material;
   lastStamp = null;                 // a new stroke always places its first object
   if (DRAG_TOOLS.has(tool.id)) { dragStart = { x, y, erase }; return; }
-  if (!erase && tool.id === 'paint' && tryAdjust(x, y)) return;
 
   switch (tool.id) {
     case 'flood': forEachSymmetric(x, y, (px, py) => floodFill(px, py, t)); break;

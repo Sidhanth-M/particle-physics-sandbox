@@ -12,7 +12,7 @@ import {
 } from './grid.js';
 import {
   CAT, CATEGORY, DENSITY, DISPERSION, FRICTION,
-  CORROSIVE, CORROSION_RESIST, IS_FLUID, IS_CORRODIBLE,
+  CORROSIVE, CORROSION_RESIST, IS_FLUID, IS_CORRODIBLE, DOUSED_BY_WATER, BUOYANT,
   EMPTY, WATER, ICE, SMOKE,
 } from './materials.js';
 import { stepHeat } from './heat.js';
@@ -153,11 +153,15 @@ function corrode(i, x, y, t) {
 function updateFire(i, x, y) {
   const w = G.w, h = G.h, mat = G.mat;
 
-  // water still puts a flame out on contact; heat alone is too slow to look right
-  if ((y > 0 && (mat[i - w] === WATER || mat[i - w] === ICE)) ||
-      (y < h - 1 && (mat[i + w] === WATER || mat[i + w] === ICE)) ||
-      (x > 0 && (mat[i - 1] === WATER || mat[i - 1] === ICE)) ||
-      (x < w - 1 && (mat[i + 1] === WATER || mat[i + 1] === ICE))) {
+  // Water still puts a FLAME out on contact; heat alone is too slow to look
+  // right. Gated per material rather than applied to every ENERGY cell: a spark
+  // dropped in water is not extinguished, it conducts, and that is the only way
+  // charge ever crosses a pool now that there is no battery.
+  if (DOUSED_BY_WATER[mat[i]] &&
+      ((y > 0 && (mat[i - w] === WATER || mat[i - w] === ICE)) ||
+       (y < h - 1 && (mat[i + w] === WATER || mat[i + w] === ICE)) ||
+       (x > 0 && (mat[i - 1] === WATER || mat[i - 1] === ICE)) ||
+       (x < w - 1 && (mat[i + 1] === WATER || mat[i + 1] === ICE)))) {
     clearCell(i);
     return;
   }
@@ -175,7 +179,9 @@ function updateFire(i, x, y) {
   G.shade[i] = (Math.random() * 4) | 0;  // flicker
   wakeIndex(i);
 
-  if (Math.random() < 0.82) {
+  // Only a flame rises. A spark stays where you put it for its short life, which
+  // is what makes "zap this" a usable action at all.
+  if (BUOYANT[mat[i]] && Math.random() < 0.82) {
     const r = (Math.random() * 7) | 0;
     let j = -1;
     if (r < 3) { if (y > 0) j = i - w; }

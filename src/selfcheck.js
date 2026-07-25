@@ -8,8 +8,9 @@
 
 import {
   G, initGrid, setCell, clearGrid, clearCell as clearCellAt,
-  awakeChunkCount, F_BURNING, AMBIENT,
+  awakeChunkCount, F_BURNING, AMBIENT, AMBIENT_DEFAULT, setAmbient,
 } from './grid.js';
+import * as M_GRID from './grid.js';
 import { stepSim } from './sim.js';
 import { heatStats } from './heat.js';
 import { reactionStats, reactionKeys, reactionCount } from './reactions.js';
@@ -20,7 +21,7 @@ import {
 } from './tools.js';
 import {
   selectTool, selectMaterial, setBrush, toolReach, setDrawer, drawerOpen, setInspector,
-  setCodex, codexOpen,
+  setCodex, codexOpen, refreshWorld, setWorldOpen, worldOpen,
 } from './ui.js';
 import { STAMPS, stampSpan } from './stamps.js';
 import { buildCodex, expectedCounts } from './codex.js';
@@ -444,58 +445,139 @@ export function runSelfChecks() {
 
   /* ------------------------------ phase 5 ------------------------------ */
 
-  check('current runs the length of a wire and stops when the source is cut', () => {
+  /*
+   * SPARK is the only charge source now — the circuit-building materials were
+   * removed on purpose. A spark lives 8-22 frames, which is plenty: propagation
+   * is an in-place max-flood, so a run lights up within a frame or two. It also
+   * makes the "goes dead when the source stops" case self-driving, because the
+   * spark expires on its own rather than needing to be pulled out.
+   */
+  check('a spark energises a metal run, which dies when the spark burns out', () => {
     initGrid(96, 96);
     clearGrid();
     const W = 96, y = 40;
-    setCell(y * W + 10, M.BATTERY);
-    for (let x = 11; x < 80; x++) setCell(y * W + x, M.WIRE);
+    for (let x = 11; x < 80; x++) setCell(y * W + x, METAL);
+    setCell(y * W + 10, M.SPARK);
+
     let reachedEnd = false;
-    for (let k = 0; k < 400 && !reachedEnd; k++) {
+    for (let k = 0; k < 60 && !reachedEnd; k++) {
       stepSim();
       if (G.charge[y * W + 79] > 0) reachedEnd = true;
     }
-    assert(reachedEnd, 'charge should travel the whole 69-cell wire run');
+    assert(reachedEnd, 'charge should travel the whole 69-cell metal run');
 
-    // cut the supply: the wire must go dead rather than staying live forever
-    clearCellAt(y * W + 10);
-    run(300);
+    run(300);                                   // long past the spark's lifetime
     let live = 0;
     for (let x = 11; x < 80; x++) if (G.charge[y * W + x] > 0) live++;
-    assert(live === 0, `${live} wire cells still carry current after the battery was removed`);
+    assert(live === 0, `${live} cells still carry current long after the spark burned out`);
   });
 
-  check('current arcs across a gap between two wire runs', () => {
+  check('current arcs across a gap between two metal runs', () => {
     initGrid(96, 96);
     clearGrid();
     const W = 96, y = 40;
-    setCell(y * W + 10, M.BATTERY);
-    for (let x = 11; x < 40; x++) setCell(y * W + x, M.WIRE);
+    for (let x = 11; x < 40; x++) setCell(y * W + x, METAL);
     // two-cell air gap, then the far run
-    for (let x = 42; x < 70; x++) setCell(y * W + x, M.WIRE);
+    for (let x = 42; x < 70; x++) setCell(y * W + x, METAL);
+    setCell(y * W + 10, M.SPARK);
     let jumped = false;
-    for (let k = 0; k < 600 && !jumped; k++) {
+    for (let k = 0; k < 120 && !jumped; k++) {
       stepSim();
       if (G.charge[y * W + 42] > 0) jumped = true;
     }
-    assert(jumped, 'current should arc the gap and energise the far wire run');
+    assert(jumped, 'current should arc the gap and energise the far run');
   });
 
   check('current detonates gunpowder', () => {
     initGrid(96, 96);
     clearGrid();
-    clearParticles();
     const W = 96;
     for (let x = 0; x < W; x++) setCell(95 * W + x, WALL);
     // The charge is a POWDER: left as a free pile it slumps out from under the
-    // wire before the current arrives. Bin it, and drop the wire in from above.
+    // conductor before the current arrives. Bin it, and drop the run in from above.
     for (let y = 86; y < 95; y++) { setCell(y * W + 39, WALL); setCell(y * W + 56, WALL); }
     fill(88, 95, 40, 56, M.GUNPOWDER);
-    setCell(78 * W + 48, M.BATTERY);
-    for (let y = 79; y <= 87; y++) setCell(y * W + 48, M.WIRE);
+    for (let y = 79; y <= 87; y++) setCell(y * W + 48, METAL);
+    setCell(78 * W + 48, M.SPARK);
     blastStats.total = 0;
     for (let k = 0; k < 900 && blastStats.total === 0; k++) stepSim();
     assert(blastStats.total > 0, 'current reaching gunpowder should set it off');
+  });
+
+  check('a flame rises but a spark stays where it is put', () => {
+    /*
+     * ENERGY cells drift upward into empty space because hot gas rises. That is
+     * right for a flame and wrong for a discharge, and while it applied to both
+     * a spark floated off within a frame or two of being placed — measured as
+     * 15 failures in 16 at setting off gunpowder it was sitting directly on.
+     * Every stochastic failure in the electrical checks traced back to this.
+     */
+    initGrid(64, 64);
+    clearGrid();
+    const W = 64, START = 50;
+
+    setCell(START * W + 20, FIRE);
+    let flameTop = START;
+    for (let f = 0; f < 20; f++) {
+      stepSim();
+      for (let i = 0; i < G.n; i++) {
+        if (G.mat[i] !== FIRE) continue;
+        const y = (i / W) | 0;
+        if (y < flameTop) flameTop = y;
+      }
+    }
+    assert(START - flameTop >= 3, `a flame should rise, it moved ${START - flameTop} cells`);
+
+    initGrid(64, 64);
+    clearGrid();
+    setCell(START * W + 20, M.SPARK);
+    run(4);                                   // well inside the 8-frame minimum life
+    assert(G.mat[START * W + 20] === M.SPARK,
+      'a spark must stay put for its life, or it drifts away before it can do anything');
+  });
+
+  check('a spark sets off gunpowder it is sitting on', () => {
+    // The heat path rather than the charge path: a spark is 1500C and gunpowder
+    // ignites at 250C. Deterministic — 16/16 at frame 4 once sparks stopped
+    // drifting. The control confirms the pile is not simply unstable.
+    const pile = () => {
+      initGrid(96, 96);
+      clearGrid();
+      const W = 96;
+      for (let x = 0; x < W; x++) setCell(95 * W + x, WALL);
+      for (let y = 86; y < 95; y++) { setCell(y * W + 39, WALL); setCell(y * W + 56, WALL); }
+      fill(88, 95, 40, 56, M.GUNPOWDER);
+    };
+    const detonatesWithin = (frames) => {
+      blastStats.total = 0;
+      for (let f = 0; f < frames; f++) { stepSim(); if (blastStats.total > 0) return true; }
+      return false;
+    };
+
+    pile();
+    assert(!detonatesWithin(200), 'an undisturbed gunpowder pile must not go off by itself');
+
+    pile();
+    setCell(87 * 96 + 48, M.SPARK);
+    assert(detonatesWithin(60), 'a spark resting on gunpowder should set it off');
+  });
+
+  check('a spark survives in water and charges the whole body', () => {
+    // A flame is snuffed by water; an electrical discharge is not. Without this
+    // distinction a spark dropped in a pool dies on the first frame and charge
+    // can never cross water at all.
+    initGrid(96, 96);
+    clearGrid();
+    const W = 96;
+    for (let x = 20; x < 60; x++) setCell(70 * W + x, WALL);
+    fill(60, 70, 20, 60, WATER);
+    setCell(65 * W + 40, M.SPARK);
+    run(2);
+    assert(G.mat[65 * W + 40] === M.SPARK, 'water should not extinguish a spark');
+
+    let charged = 0;
+    for (let i = 0; i < G.n; i++) if (G.mat[i] === WATER && G.charge[i] > 0) charged++;
+    assert(charged > 50, `a spark in water should charge the body, only ${charged} cells carry current`);
   });
 
   check('a water body carries current out to its decay limit', () => {
@@ -503,8 +585,8 @@ export function runSelfChecks() {
     tank(96, 96, L, R, FLOOR);
     fill(FLOOR - 12, FLOOR, L, R, WATER);
     run(400);                                     // let it settle flat
-    setCell((FLOOR - 1) * G.w + L, M.BATTERY);    // electrode at one end
-    run(30);
+    setCell((FLOOR - 1) * G.w + L, M.SPARK);      // electrode at one end
+    run(4);
 
     let reach = -1;
     for (let i = 0; i < G.n; i++) {
@@ -530,187 +612,6 @@ export function runSelfChecks() {
     const hops = Math.floor(255 / M.CHARGE_DECAY[WATER]);
     assert(reach <= L + hops + 2,
       `charge reached ${reach - L} cells, past the ${hops}-hop limit its decay allows`);
-  });
-
-  check('a loaded fuse burns out while a metal bus survives', () => {
-    initGrid(96, 96);
-    clearGrid();
-    const W = 96;
-    // Same current through each: the difference is the material's resistance,
-    // not its cross-section. Charge here does not divide across parallel paths,
-    // so geometry cannot be the variable — a thicker run of the same material
-    // would actually run hotter, having no internal gradient to shed heat down.
-    setCell(20 * W + 5, M.BATTERY);
-    for (let x = 6; x < 60; x++) setCell(20 * W + x, M.FUSE);
-    setCell(60 * W + 5, M.BATTERY);
-    for (let x = 6; x < 60; x++) setCell(60 * W + x, METAL);
-
-    // A fuse blows at ONE point: the first cell to melt breaks the run, so
-    // everything downstream de-energises and cools. Whole-run destruction is
-    // the wrong thing to assert — a break plus a dead far end is the signal.
-    let blown = false;
-    for (let k = 0; k < 4000 && !blown; k++) {
-      stepSim();
-      for (let x = 6; x < 60; x++) if (G.mat[20 * W + x] !== M.FUSE) { blown = true; break; }
-    }
-    assert(blown, 'a fuse under sustained load should burn through somewhere');
-
-    // Deliberately NOT asserting the far end goes dead: a one-cell gap is
-    // within arc reach, so current jumps it and keeps eating the run. That is
-    // the arcing rule working, and it means fuse wire is progressively consumed
-    // under load rather than failing once.
-    run(600);
-    let gone = 0;
-    for (let x = 6; x < 60; x++) if (G.mat[20 * W + x] !== M.FUSE) gone++;
-    assert(gone > 1, `the arc across the break should keep consuming the fuse, ${gone} cells gone`);
-
-    let metalLeft = 0;
-    for (let x = 6; x < 60; x++) if (G.mat[60 * W + x] === METAL) metalLeft++;
-    assert(metalLeft === 54, `the low-resistance metal bus should be untouched, ${metalLeft}/54 left`);
-    assert(G.charge[60 * W + 59] > 0, 'the metal bus should still be carrying current');
-  });
-
-  /* ------------------------------ phase 10 ------------------------------ */
-
-  check('wire carries a battery indefinitely, where a fuse blows', () => {
-    // The bug this phase exists to fix: wire had resistance 0.2 against a source
-    // that pins charge at 255, so resistive heating added 51 C/frame into a
-    // 1000 C melting point — wire touching a battery blew in about 20 frames.
-    initGrid(96, 96);
-    clearGrid();
-    const W = 96, Y = 20;
-    setCell(Y * W + 5, M.BATTERY);
-    for (let x = 6; x < 60; x++) setCell(Y * W + x, M.WIRE);
-
-    run(3000);
-
-    let left = 0, peak = -Infinity;
-    for (let x = 6; x < 60; x++) {
-      if (G.mat[Y * W + x] === M.WIRE) left++;
-      peak = Math.max(peak, G.temp[Y * W + x]);
-    }
-    assert(left === 54, `wire must survive its own supply: ${left}/54 left after 3000 frames`);
-    assert(peak < M.MELT_POINT[M.WIRE],
-      `wire settled at ${peak.toFixed(0)}C against a ${M.MELT_POINT[M.WIRE]}C melting point`);
-    assert(G.charge[Y * W + 59] > 0, 'the far end of the wire should still be energised');
-  });
-
-  check('an open switch cuts the circuit and closing it restores current', () => {
-    initGrid(96, 96);
-    clearGrid();
-    const W = 96, Y = 20, FAR = 60;
-    setCell(Y * W + 5, M.BATTERY);
-    for (let x = 6; x < FAR; x++) setCell(Y * W + x, M.WIRE);
-    // six cells wide, deliberately beyond arc reach — a one-cell switch would be
-    // jumped by the arc rule, which is correct behaviour but untestable as a switch
-    for (let x = 30; x < 36; x++) setCell(Y * W + x, M.SWITCH);
-
-    run(200);
-    assert(G.charge[Y * W + FAR - 1] > 0, 'a freshly placed switch is closed and should pass current');
-
-    for (let x = 30; x < 36; x++) G.aux[Y * W + x] = 1;
-    run(400);
-    assert(G.charge[Y * W + FAR - 1] === 0,
-      `an open switch should cut the far end, still reads ${G.charge[Y * W + FAR - 1]}`);
-    assert(G.charge[Y * W + 10] > 0, 'the supply side of an open switch should stay live');
-    for (let x = 30; x < 36; x++) {
-      assert(G.shade[Y * W + x] >= 2, 'an open switch should show its open shade');
-    }
-
-    for (let x = 30; x < 36; x++) G.aux[Y * W + x] = 0;
-    run(200);
-    assert(G.charge[Y * W + FAR - 1] > 0, 'closing the switch should restore current');
-  });
-
-  check('a lamp lights only while it is carrying current', () => {
-    initGrid(96, 96);
-    clearGrid();
-    const W = 96, Y = 20, LI = Y * W + 40;
-    setCell(Y * W + 5, M.BATTERY);
-    for (let x = 6; x < 40; x++) setCell(Y * W + x, M.WIRE);
-    setCell(LI, M.LAMP);
-
-    const glowOf = (shade) => M.PALETTE_RGBA[((M.LAMP * 4) + shade) * 4 + 3];
-
-    run(200);
-    const lit = G.shade[LI];
-    assert(lit >= 2, `a powered lamp should switch to a lit shade, got ${lit}`);
-    assert(glowOf(lit) > 200, `the lit shade must actually glow, alpha ${glowOf(lit)}`);
-
-    clearCellAt(Y * W + 5);                    // pull the battery
-    run(400);
-    const dark = G.shade[LI];
-    assert(dark < 2, `an unpowered lamp should go dark, shade ${dark}`);
-    assert(glowOf(dark) === 0, `the dark shade must not glow, alpha ${glowOf(dark)}`);
-  });
-
-  check('a fan moves fluid only while it is powered', () => {
-    /*
-     * A ONE-CELL-WIDE vertical shaft with the fan at the bottom facing up.
-     *
-     * The control here is GRAVITY, which is deterministic, and the shaft's width
-     * removes horizontal dispersion entirely — measured 20/20 repeats at exactly
-     * 73.5 unpowered and 61.5 powered, zero variance either way.
-     *
-     * Three earlier designs measured nothing, each for a different reason, and
-     * they are worth not repeating: fluid placed outside FAN_REACH is never
-     * touched, so the test read pure drift; a WATER probe conducts, so the
-     * battery boiled it rather than the fan blowing it; and a liquid in a wide
-     * sealed tube returns to hydrostatic equilibrium whatever the fan does. The
-     * horizontal version that survived all three still failed intermittently,
-     * because comparing two samples of a random walk is not a measurement.
-     */
-    const meanY = (powered) => {
-      initGrid(96, 96);
-      clearGrid();
-      const W = 96, X = 40;
-      for (let y = 20; y <= 80; y++) { setCell(y * W + X - 1, WALL); setCell(y * W + X + 1, WALL); }
-      setCell(80 * W + X, M.FAN);
-      G.aux[80 * W + X] = 0;                             // facing up
-      if (powered) setCell(81 * W + X, M.BATTERY);
-      for (let y = 40; y < 48; y++) setCell(y * W + X, OIL);   // oil does not conduct
-
-      run(30);
-      let sum = 0, n = 0;
-      for (let y = 20; y <= 80; y++) if (G.mat[y * W + X] === OIL) { sum += y; n++; }
-      return n === 0 ? NaN : sum / n;
-    };
-
-    const fell = meanY(false), held = meanY(true);
-    assert(held < fell - 6,
-      `a powered fan should hold fluid up against gravity: mean row ${fell.toFixed(1)} unpowered, ` +
-      `${held.toFixed(1)} powered`);
-  });
-
-  check('clicking a placed component adjusts it instead of repainting', () => {
-    initGrid(96, 96);
-    clearGrid();
-    tool.symX = false; tool.symY = false;
-    selectTool('paint');
-    setBrush(1);
-
-    selectMaterial(M.SWITCH);
-    const i = 40 * 96 + 40;
-    toolDown(40, 40, false); toolUp(40, 40);
-    assert(G.mat[i] === M.SWITCH, 'the first click on empty space should place the switch');
-    assert(G.aux[i] === 0, 'a newly placed switch must default to CLOSED, or new circuits are dead');
-    toolDown(40, 40, false); toolUp(40, 40);
-    assert(G.mat[i] === M.SWITCH && G.aux[i] === 1, 'clicking it again should open it');
-    toolDown(40, 40, false); toolUp(40, 40);
-    assert(G.aux[i] === 0, 'and again should close it');
-
-    selectMaterial(M.FAN);
-    const j = 50 * 96 + 50;
-    toolDown(50, 50, false); toolUp(50, 50);
-    assert(G.mat[j] === M.FAN && G.aux[j] === 0, 'a placed fan should start facing up');
-    toolDown(50, 50, false); toolUp(50, 50);
-    assert(G.aux[j] === 1, 'clicking a placed fan should rotate it');
-
-    // a DIFFERENT material must still paint straight over it
-    selectMaterial(SAND);
-    toolDown(50, 50, false); toolUp(50, 50);
-    assert(G.mat[j] === M.FAN, 'sand should not overwrite packed terrain, fan included');
-    setBrush(3);
   });
 
   /* ------------------------------ phase 6 ------------------------------ */
@@ -882,8 +783,8 @@ export function runSelfChecks() {
     fill(20, 28, 20, 40, ICE);
     fill(60, 78, 100, 124, WOOD);
     fill(10, 18, 70, 90, M.GUNPOWDER);
-    setCell(40 * W + 100, M.BATTERY);
-    for (let x = 101; x < 120; x++) setCell(40 * W + x, M.WIRE);
+    for (let x = 101; x < 120; x++) setCell(40 * W + x, METAL);
+    setCell(40 * W + 100, M.SPARK);
     run(150);                       // let it develop fire, steam, charge, flags
     for (let i = 0; i < G.n; i += 37) G.charge[i] = (i * 13) % 256;
     G.temp[5 * W + 5] = 1234.5;     // an awkward float that must survive exactly
@@ -1143,6 +1044,101 @@ export function runSelfChecks() {
       'an in-bounds cursor should still report normally');
   });
 
+  /* ---------------------------- world controls ---------------------------- */
+
+  check('room temperature actually drives the world toward it', () => {
+    // The point of the control is physics, not a label: a scene left alone must
+    // drift to whatever the room is set to, in either direction.
+    const settleAt = (deg) => {
+      setAmbient(deg);
+      initGrid(64, 64);
+      clearGrid();
+      fill(40, 60, 10, 54, SAND);
+      run(1500);
+      let sum = 0, n = 0;
+      for (let i = 0; i < G.n; i++) if (G.mat[i] === SAND) { sum += G.temp[i]; n++; }
+      return n === 0 ? NaN : sum / n;
+    };
+
+    const hot = settleAt(400);
+    assert(Math.abs(hot - 400) < 40, `sand in a 400°C room settled at ${hot.toFixed(0)}°C`);
+
+    const cold = settleAt(-60);
+    assert(Math.abs(cold - -60) < 40, `sand in a -60°C room settled at ${cold.toFixed(0)}°C`);
+
+    setAmbient(AMBIENT_DEFAULT);
+    const normal = settleAt(AMBIENT_DEFAULT);
+    assert(Math.abs(normal - AMBIENT_DEFAULT) < 10, `back at default, sand settled at ${normal.toFixed(0)}°C`);
+  });
+
+  check('a hot room ignites what a normal room leaves alone', () => {
+    // The composed consequence, which is the actual reason to want this control.
+    const woodSurvives = (deg) => {
+      setAmbient(deg);
+      initGrid(64, 64);
+      clearGrid();
+      fill(40, 56, 16, 48, WOOD);
+      const before = countOf(WOOD);
+      run(1200);
+      return { before, after: countOf(WOOD) };
+    };
+
+    const cool = woodSurvives(AMBIENT_DEFAULT);
+    assert(cool.after === cool.before,
+      `wood should not burn at ${AMBIENT_DEFAULT}°C (${cool.before} -> ${cool.after})`);
+
+    const baked = woodSurvives(500);   // well past wood's 300°C ignition point
+    assert(baked.after < baked.before * 0.9,
+      `wood in a 500°C room should catch (${baked.before} -> ${baked.after})`);
+
+    setAmbient(AMBIENT_DEFAULT);
+  });
+
+  check('room temperature is clamped and survives a scene round trip', () => {
+    setAmbient(99999);
+    assert(AMBIENT === M_GRID.AMBIENT_MAX, `ambient should clamp high, got ${AMBIENT}`);
+    setAmbient(-99999);
+    assert(AMBIENT === M_GRID.AMBIENT_MIN, `ambient should clamp low, got ${AMBIENT}`);
+
+    setAmbient(275);
+    initGrid(64, 64);
+    clearGrid();
+    fill(40, 56, 10, 50, SAND);
+    const bytes = encodeScene();
+    setAmbient(AMBIENT_DEFAULT);              // wipe it, then let the scene restore it
+    decodeScene(bytes);
+    assert(AMBIENT === 275, `a decoded scene should restore its room temperature, got ${AMBIENT}`);
+
+    setAmbient(AMBIENT_DEFAULT);
+  });
+
+  check('the world bar reports the armed view and the room', () => {
+    setAmbient(AMBIENT_DEFAULT);
+    refreshWorld();
+    const summary = document.getElementById('worldSummary');
+    assert(/Normal/.test(summary.textContent) && /20°C/.test(summary.textContent),
+      `world summary reads "${summary.textContent}"`);
+
+    const heat = document.querySelector('#viewGrid [data-view="heat"]');
+    assert(heat, 'the view switcher should live on the canvas bar');
+    heat.click();
+    assert(/Heat map/.test(summary.textContent), `summary did not follow the view: "${summary.textContent}"`);
+
+    setAmbient(310);
+    refreshWorld();
+    assert(/310°C/.test(summary.textContent), `summary did not follow the room: "${summary.textContent}"`);
+
+    document.querySelector('#viewGrid [data-view="normal"]').click();
+    setAmbient(AMBIENT_DEFAULT);
+    refreshWorld();
+
+    // and it must collapse, since it sits on top of the canvas
+    setWorldOpen(false);
+    assert(!worldOpen(), 'the world bar should collapse out of the way');
+    setWorldOpen(true);
+    assert(worldOpen(), 'the world bar should reopen');
+  });
+
   check('the scene drawer opens and closes', () => {
     setDrawer(false);
     assert(!drawerOpen(), 'drawer should start closed');
@@ -1263,7 +1259,7 @@ export function runSelfChecks() {
   });
 
   check('the stamp materials are wired to their generators', () => {
-    const want = { [M.PLANT]: 'sprig', [M.FUNGUS]: 'mushroom', [M.BATTERY]: 'battery' };
+    const want = { [M.PLANT]: 'sprig', [M.FUNGUS]: 'mushroom' };
     for (const [id, name] of Object.entries(want)) {
       assert(M.STAMP[id] === name, `material ${id} should stamp "${name}", got ${M.STAMP[id]}`);
     }
@@ -1364,34 +1360,6 @@ export function runSelfChecks() {
       if (!leafy) bare.push(`${t.x0}-${t.x1} (crown row ${crown})`);
     }
     assert(bare.length === 0, `trunks with no canopy above them: ${bare.join(', ')}`);
-  });
-
-  check('the circuit board preset actually lights its lamp', () => {
-    /*
-     * A preset that quietly fails is worse than no preset. The first version of
-     * this one placed the lamp 305 cells from the battery, against a charge that
-     * starts at 255 and loses 1 per hop of wire — it could never have lit, and
-     * nothing in the suite would have said so.
-     */
-    initGrid(400, 250);
-    clearGrid();
-    applyPreset('circuit');
-    run(120);
-
-    let lit = 0, dark = 0, sw = 0;
-    for (let i = 0; i < G.n; i++) {
-      if (G.mat[i] === M.LAMP) { if (G.shade[i] >= 2) lit++; else dark++; }
-      if (G.mat[i] === M.SWITCH) sw++;
-    }
-    assert(lit > 0, `the preset's lamp never lit (${dark} dark cells) — the rail cannot reach it`);
-    assert(sw > 0, 'the preset should ship a switch to cut the light with');
-
-    // opening the switch must put it out again
-    for (let i = 0; i < G.n; i++) if (G.mat[i] === M.SWITCH) G.aux[i] = 1;
-    run(200);
-    let stillLit = 0;
-    for (let i = 0; i < G.n; i++) if (G.mat[i] === M.LAMP && G.shade[i] >= 2) stillLit++;
-    assert(stillLit === 0, `${stillLit} lamp cells stayed lit after the switch was opened`);
   });
 
   check('the forest fire actually crosses the forest', () => {

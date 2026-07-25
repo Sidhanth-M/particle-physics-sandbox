@@ -16,8 +16,33 @@ const CHUNK_MASK = CHUNK - 1;
 /** Persistent per-cell flag bits (transient "moved" state lives in `stamp`). */
 export const F_BURNING = 1 << 0;
 
-/** Room temperature, in degrees C. */
-export const AMBIENT = 20;
+/**
+ * Room temperature, in degrees C.
+ *
+ * A live binding rather than a constant: importers see changes without any
+ * plumbing, which is why `heat.js` needs no knowledge that this is adjustable.
+ */
+export let AMBIENT = 20;
+export const AMBIENT_DEFAULT = 20, AMBIENT_MIN = -100, AMBIENT_MAX = 600;
+
+/**
+ * Set room temperature and let the world drift toward it.
+ *
+ * Every chunk is woken because the ambient bleed is only applied inside AWAKE
+ * chunks — a settled scene would otherwise ignore the new value completely until
+ * something else happened to disturb it. One wake is enough: diffusion re-wakes
+ * any cell whose temperature is still moving, so the drift sustains itself and
+ * stops on its own at equilibrium.
+ */
+export function setAmbient(v) {
+  const next = Math.max(AMBIENT_MIN, Math.min(AMBIENT_MAX, Math.round(v)));
+  if (next === AMBIENT) return;
+  AMBIENT = next;
+  if (!G.active) return;                  // called before the grid exists
+  G.active.fill(1);
+  G.activeNext.fill(1);
+  G.tempVersion++;
+}
 
 export const G = {
   w: 0, h: 0, n: 0,

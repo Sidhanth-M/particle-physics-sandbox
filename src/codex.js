@@ -159,13 +159,17 @@ const TRY_THIS = [
   ['Light a fire and let it go out',
     'Wood burns in place, staying wood-shaped while it glows, then collapses into ash when its fuel runs out.'],
   ['Boil a tank of brine dry',
-    'Electrify brine with a battery. Current heats it, the heat boils it away, and the salt it was ' +
+    'Drop a spark into brine. The current heats it, the heat boils it away, and the salt it was ' +
     'carrying is left behind as a solid.'],
-  ['Cut the lights',
-    'Load the Circuit Board preset, choose Switch, and click the switch in the rail. The lamp goes out.'],
-  ['Blow a fuse',
-    'Wire a battery through Fuse instead of Wire. Same current, fifty times the resistance: it glows, ' +
-    'then burns through.'],
+  ['Zap a pool of water',
+    'A spark is the only thing that supplies current. Drop one into water and the charge spreads ' +
+    'across the whole body at once — watch it in the Charge view.'],
+  ['Set off gunpowder without a flame',
+    'Run a spark next to a gunpowder pile. Current passing nearby nudges it over its own ignition ' +
+    'point, so it goes off through the ordinary rules rather than a special case.'],
+  ['Turn the room into an oven',
+    'Push room temperature past 300°C and walk away. Wood catches on its own, ice never survives, ' +
+    'and water boils off the moment you place it.'],
   ['Throw a thermite charge into water',
     'Thermite is the one thing that keeps burning submerged, and the only thing hot enough to melt ' +
     'straight through metal.'],

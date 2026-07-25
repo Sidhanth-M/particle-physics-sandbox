@@ -8,7 +8,8 @@ import { createRenderer, VIEW } from './renderer.js';
 import { tool, toolDown, toolDrag, toolUp, cancelDrag, DRAG_TOOLS } from './tools.js';
 import { seedScene, pushUndo, loadFromHash, clearHistory } from './scene.js';
 import {
-  initUI, setStats, setInspector, syncPaused, selectMaterial, refreshMaterial, toolReach,
+  initUI, setStats, setInspector, syncPaused, selectMaterial, refreshMaterial,
+  toolReach, refreshWorld,
 } from './ui.js';
 import { EMPTY, SAND } from './materials.js';
 import { clearParticles, particleCount } from './particles.js';
@@ -125,13 +126,14 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 initUI({
   togglePause() { paused = !paused; syncPaused(paused); },
   step() { paused = true; syncPaused(paused); stepOnce = true; },
-  clear() { pushUndo(); clearGrid(); clearParticles(); },
+  clear() { pushUndo(); clearGrid(); clearParticles(); refreshWorld(); },
   beforeEdit() { pushUndo(); },
   setView(v) { viewMode = v; },
   setSpeed(v) { speed = v; },
 });
 selectMaterial(SAND);
 syncPaused(paused);
+refreshWorld();          // a shared scene carries its own room temperature
 
 // Self-checks run AFTER the UI exists, so DOM affordances (ring reach, tool
 // arming, scroll containment) are testable in the same harness as the physics.

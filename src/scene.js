@@ -8,15 +8,21 @@
  * through the platform's own CompressionStream for the share link.
  */
 
-import { G, initGrid, setCell, clearGrid, AMBIENT } from './grid.js';
+import { G, initGrid, setCell, clearGrid, AMBIENT, AMBIENT_MIN, setAmbient } from './grid.js';
 import { SAND, WATER, WALL, WOOD, STONE, LAVA, ICE, OIL, SEED, GUNPOWDER,
-         METAL, WIRE, BATTERY, BRINE, PLANT, EMPTY, MAT_COUNT,
-         FUSE, SWITCH, LAMP, FAN } from './materials.js';
+         METAL, BRINE, PLANT, EMPTY, MAT_COUNT } from './materials.js';
 import { clearParticles } from './particles.js';
 import { drawStamp } from './stamps.js';
 
 const MAGIC = 0x5344;   // "SD"
-const VERSION = 1;
+/**
+ * Bumped when the material table's NUMBERING changes, not when the format does.
+ * A scene stores raw material ids, so removing the circuit family renumbered
+ * everything after Fungus — a v1 payload decoded against v2 ids would silently
+ * come back as the wrong materials rather than failing. Refusing it is the only
+ * honest option.
+ */
+const VERSION = 2;
 
 /* ------------------------------ byte writer ------------------------------ */
 
@@ -231,6 +237,10 @@ export function encodeScene() {
   w.u8(MAT_COUNT);        // so a scene from a different roster is rejected
   w.u16(G.w);
   w.u16(G.h);
+  // Room temperature is part of the world, not of any cell: a scene built at
+  // 400C behaves nothing like the same cells at 20C, so a share link that
+  // dropped it would hand over a scene that misbehaves on arrival.
+  w.u16(AMBIENT - AMBIENT_MIN);
   rleU8(w, G.mat);
   rleU8(w, G.aux);
   rleU8(w, G.flags);
@@ -250,8 +260,10 @@ export function decodeScene(bytes) {
   const matCount = r.u8();
   if (matCount !== MAT_COUNT) throw new Error('scene was saved with a different material set');
   const w = r.u16(), h = r.u16();
+  const ambient = r.u16() + AMBIENT_MIN;
 
-  initGrid(w, h);
+  initGrid(w, h);            // fills temp with the OLD ambient...
+  setAmbient(ambient);       // ...so set it before the saved temperatures land
   clearParticles();
   unrleU8(r, G.mat);
   unrleU8(r, G.aux);
@@ -332,11 +344,20 @@ export function saveSlot(n) {
   localStorage.setItem(SLOT_KEY(n), toBase64(encodeScene()));
 }
 
+/** Returns 'ok', 'empty', or 'stale' — a slot written before a VERSION bump. */
 export function loadSlot(n) {
   const raw = localStorage.getItem(SLOT_KEY(n));
-  if (!raw) return false;
-  decodeScene(fromBase64(raw));
-  return true;
+  if (!raw) return 'empty';
+  try {
+    decodeScene(fromBase64(raw));
+    return 'ok';
+  } catch (e) {
+    // Material ids are baked into the payload, so a slot saved before the
+    // circuit family was removed decodes to the wrong materials. Refuse it
+    // rather than silently loading a scrambled scene, and say which it was.
+    console.warn(`slot ${n} could not be read:`, e.message);
+    return 'stale';
+  }
 }
 
 export function slotFilled(n) {
@@ -434,15 +455,7 @@ function scaled(fn) {
         setCell(i, mat);
         G.shade[i] = shade & 3;
       });
-  /** Set per-cell `aux` over a scaled rect: a fan's facing, a switch's state. */
-  const A = (x0, y0, x1, y1, value) => {
-    for (let y = Math.round(y0 * s); y <= Math.round(y1 * s); y++) {
-      for (let x = Math.round(x0 * s); x <= Math.round(x1 * s); x++) {
-        if (x >= 0 && x < G.w && y >= 0 && y < G.h) G.aux[y * G.w + x] = value;
-      }
-    }
-  };
-  fn(R, B, T, S, A);
+  fn(R, B, T, S);
 }
 
 export const PRESETS = [
@@ -502,44 +515,6 @@ export const PRESETS = [
       R(23, 110, 177, 118, WATER);
       R(40, 106, 160, 108, SEED);
       B(100, 60, 14, WATER, 0.5);
-    }),
-  },
-  {
-    id: 'circuit', name: 'Circuit Board',
-    /*
-     * Every run here is kept SHORT on purpose. Charge starts at 255 and wire
-     * loses 1 per hop, so anything further than ~215 cells from the battery
-     * cannot light a lamp (which needs 40 to read as lit). The first version of
-     * this preset put the lamp 305 cells away and it simply never came on.
-     * Rect ends are shared (…45, 45…) so scaling to the live grid cannot open a
-     * gap between two segments.
-     */
-    build: () => scaled((R, B, T, S, A) => {
-      R(0, 118, 199, 124, WALL);
-      R(6, 52, 13, 68, BATTERY);
-
-      // Supply -> switch -> lamp. Select Switch and click it to cut the light.
-      // Deliberately wide: a narrow break just gets arced across.
-      R(13, 59, 45, 61, WIRE);
-      R(45, 59, 51, 61, SWITCH);
-      R(51, 59, 74, 61, WIRE);
-      R(74, 53, 82, 67, LAMP);
-
-      // A fuse hanging off the same rail. It carries the same current as the
-      // wire above it and burns through anyway — that is the whole difference.
-      R(20, 61, 23, 80, WIRE);
-      R(20, 80, 23, 98, FUSE);
-
-      // A fan on the rail, blowing across an oil trough. Oil rather than water
-      // because oil does NOT conduct: a conductive fluid touching the fan gets
-      // electrolysed and boiled instead of blown, which hides the effect.
-      R(30, 61, 33, 100, WIRE);
-      R(28, 100, 35, 112, FAN);
-      A(28, 100, 35, 112, 1);           // facing right, across the trough
-      // Kept small on purpose. Liquid sideways-dispersion is the engine's
-      // dominant per-frame cost, and a trough twice this size took the preset
-      // from 4.6 to 9.9 ms of sim on its own — none of it electrical.
-      R(40, 113, 96, 118, OIL);
     }),
   },
   {

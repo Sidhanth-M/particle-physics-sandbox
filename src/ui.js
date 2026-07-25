@@ -7,7 +7,7 @@ import {
   EMPTY, SAND, WATER, WALL, WOOD, FIRE, ACID, OIL, STONE, LAVA,
 } from './materials.js';
 import { tool, TOOL_LIST, TOOL_BY_ID } from './tools.js';
-import { G } from './grid.js';
+import { G, AMBIENT, AMBIENT_DEFAULT, setAmbient } from './grid.js';
 import {
   PRESETS, applyPreset, makeShareUrl, saveSlot, loadSlot, slotFilled,
   downloadScene, undo, redo, clearHistory, SLOT_COUNT,
@@ -23,10 +23,16 @@ const ERASER_COLOR = '#64748b';
 /** Order the categories appear in the picker. */
 const GROUP_ORDER = [CAT.POWDER, CAT.LIQUID, CAT.GAS, CAT.SOLID, CAT.RIGID, CAT.ENERGY, CAT.EMITTER];
 
-/** The five shader view modes, as buttons rather than an OS-chrome <select>. */
+/**
+ * The five shader view modes. Each carries a full label for the summary line and
+ * tooltip, plus a short one so six of them fit a three-across grid on the canvas.
+ */
 const VIEWS = [
-  ['normal', 'Normal'], ['heat', 'Heat map'], ['density', 'Density'],
-  ['charge', 'Charge'], ['chunks', 'Chunks'],
+  ['normal', 'Normal', 'Normal'],
+  ['heat', 'Heat map', 'Heat'],
+  ['density', 'Density', 'Density'],
+  ['charge', 'Charge', 'Charge'],
+  ['chunks', 'Chunk activity', 'Chunks'],
 ];
 
 /**
@@ -75,6 +81,9 @@ export function initUI(controller) {
     scatter: $('scatter'), scatterVal: $('scatterVal'),
     shapeBtn: $('shapeBtn'), symXBtn: $('symXBtn'), symYBtn: $('symYBtn'), fsBtn: $('fsBtn'),
     viewGrid: $('viewGrid'), speed: $('speed'), speedVal: $('speedVal'),
+    worldBar: $('worldBar'), worldBody: $('worldBody'), worldToggle: $('worldToggle'),
+    worldSummary: $('worldSummary'), worldChevron: $('worldChevron'),
+    ambient: $('ambient'), ambientVal: $('ambientVal'), ambientReset: $('ambientReset'),
     pauseBtn: $('pauseBtn'), stepBtn: $('stepBtn'), clearBtn: $('clearBtn'),
     sceneBtn: $('sceneBtn'), sceneDrawer: $('sceneDrawer'), sceneClose: $('sceneClose'),
     codexBtn: $('codexBtn'), codexModal: $('codexModal'), codexClose: $('codexClose'),
@@ -92,6 +101,7 @@ export function initUI(controller) {
   buildViewGrid();
   buildSceneTab();
   buildCodexPanel();
+  wireWorld();
   wireDrawer();
   wireControls();
   wireKeys();
@@ -285,12 +295,14 @@ function cycleTool(dir) {
 
 function buildViewGrid() {
   const frag = document.createDocumentFragment();
-  viewButtons = VIEWS.map(([id, label]) => {
+  viewButtons = VIEWS.map(([id, label, short]) => {
     const b = document.createElement('button');
     b.dataset.view = id;
-    b.textContent = label;
-    b.className = 'tool-btn px-2 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] ' +
-      'text-[12px] text-slate-300 hover:bg-white/[0.08] hover:text-white transition';
+    b.dataset.label = label;
+    b.textContent = short;
+    b.title = label;
+    b.className = 'tool-btn px-1 py-1 rounded-md border border-white/10 bg-white/[0.05] ' +
+      'text-[11px] text-slate-300 hover:bg-white/[0.10] hover:text-white transition';
     b.addEventListener('click', () => { selectView(id); b.blur(); });
     frag.appendChild(b);
     return b;
@@ -302,6 +314,48 @@ function buildViewGrid() {
 function selectView(id) {
   for (const b of viewButtons) b.classList.toggle('active', b.dataset.view === id);
   ctl.setView(id);
+  syncWorld();
+}
+
+export function currentView() {
+  const b = viewButtons.find(v => v.classList.contains('active'));
+  return b ? b.dataset.view : 'normal';
+}
+
+/* ------------------------------ world bar ------------------------------ */
+
+function syncWorld() {
+  const active = viewButtons.find(v => v.classList.contains('active'));
+  els.worldSummary.textContent = `${active ? active.dataset.label : 'Normal'} · ${AMBIENT}°C`;
+  els.ambientVal.textContent = `${AMBIENT}°C`;
+  els.ambient.value = AMBIENT;
+  // room temperature is the one setting whose value is worth flagging when it is
+  // away from default, because everything else in the scene then behaves oddly
+  els.ambientVal.classList.toggle('text-amber-300', AMBIENT === AMBIENT_DEFAULT);
+  els.ambientVal.classList.toggle('text-rose-300', AMBIENT !== AMBIENT_DEFAULT);
+}
+
+/** Re-read ambient from the model — a loaded scene carries its own. */
+export function refreshWorld() { syncWorld(); }
+
+export function setWorldOpen(open) {
+  els.worldBody.classList.toggle('hidden', !open);
+  els.worldChevron.innerHTML = open ? '&#9662;' : '&#9656;';
+}
+
+export function worldOpen() { return !els.worldBody.classList.contains('hidden'); }
+
+function wireWorld() {
+  els.worldToggle.addEventListener('click', () => {
+    setWorldOpen(!worldOpen());
+    els.worldToggle.blur();
+  });
+  els.ambient.addEventListener('input', () => { setAmbient(+els.ambient.value); syncWorld(); });
+  els.ambientReset.addEventListener('click', () => {
+    setAmbient(AMBIENT_DEFAULT);
+    syncWorld();
+    els.ambientReset.blur();
+  });
 }
 
 /* -------------------------------- scene tab -------------------------------- */
@@ -368,7 +422,9 @@ function buildSceneTab() {
   for (let n = 1; n <= SLOT_COUNT; n++) {
     lgrid.appendChild(smallButton(`Load ${n}`, (b) => {
       ctl.beforeEdit();
-      if (!loadSlot(n)) flash(b, 'Empty');
+      const r = loadSlot(n);
+      if (r === 'empty') flash(b, 'Empty');
+      else if (r === 'stale') flash(b, 'Old format');
     }));
   }
   slots.appendChild(lgrid);

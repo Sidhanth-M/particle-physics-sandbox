@@ -25,8 +25,7 @@ export const EMPTY = 0, SAND = 1, DIRT = 2, STONE = 3, WALL = 4, WOOD = 5,
              MOLTEN_GLASS = 17, METAL = 18, MOLTEN_METAL = 19, OBSIDIAN = 20,
              SALT = 21, BRINE = 22, GUNPOWDER = 23, NITRO = 24, THERMITE = 25,
              GASOLINE = 26, ACID_VAPOR = 27, SEED = 28, PLANT = 29, VINE = 30,
-             FUNGUS = 31, WIRE = 32, BATTERY = 33, SPARK = 34, PLASMA = 35,
-             EMITTER = 36, FUSE = 37, SWITCH = 38, LAMP = 39, FAN = 40;
+             FUNGUS = 31, SPARK = 32, PLASMA = 33, EMITTER = 34;
 
 /** Sentinel for "this material has no inherent spawn temperature". */
 export const INHERIT_TEMP = -9999;
@@ -46,6 +45,19 @@ const DEFAULTS = {
   corrosionResist: 1,
   /** ENERGY/GAS: initial lifetime in frames, [min, max]. [0,0] = never decays. */
   life: [0, 0],
+  /**
+   * ENERGY: water snuffs this out on contact. True for flame, false for
+   * electrical discharge — a spark in water is not put out, it CONDUCTS, which
+   * is the whole reason charge can cross a pool.
+   */
+  dousedByWater: false,
+  /**
+   * ENERGY: drifts upward into empty space, because hot gas rises. True for
+   * flame. A discharge is not a gas and must NOT drift: a spark left buoyant
+   * floats off within a frame or two of being placed, which measured as 15
+   * failures in 16 at setting off gunpowder it was sitting directly on.
+   */
+  buoyant: false,
   /** 0..1 glow strength. Drives the bloom pass; rides in the palette's alpha. */
   emissive: 0,
   /**
@@ -182,6 +194,7 @@ export const MATERIALS = [
 
   m({ name: 'Fire', category: CAT.ENERGY, density: 0.2, life: [30, 90],
       emissive: 1, conductivity: 0.3, spawnTemp: 950,
+      dousedByWater: true, buoyant: true,
       selfHeat: 999, selfHeatCap: 950,                      // a flame holds its own temperature
       colors: ['#ff4800', '#ff7a00', '#ffb300', '#ff2d00'] }),
 
@@ -308,34 +321,23 @@ export const MATERIALS = [
       stamp: 'mushroom',
       colors: ['#7c5f92', '#9a78b4', '#e6dcf0', '#cfc2de'] }),
 
-  /* -------------------------- electrical family -------------------------- */
+  /* --------------------------- energy family --------------------------- */
 
-  // Wire is the WORKING conductor: low resistance, lowest charge decay in the
-  // roster, so current runs a long way and the wire survives a battery
-  // indefinitely.
-  //
-  // It used to carry resistance 0.2 with a comment claiming that lasted
-  // "hundreds of frames". That was simply false against a source: a battery
-  // pins charge at 255 every frame, so resistive heating added 255 * 0.2 =
-  // 51 C/frame against a 1000 C melting point — wire touching a battery blew in
-  // about 20 frames, which made it useless as wire. The blow-out behaviour was
-  // worth keeping, so it moved to Fuse where you can ask for it deliberately.
-  m({ name: 'Wire', category: CAT.SOLID, density: 7000,
-      corrosionResist: 0.5, conductivity: 0.3, blastResist: 3,
-      conducts: true, chargeDecay: 1, resistance: 0.004,
-      meltPoint: 1000, meltProduct: EMPTY,                  // still melts in a fire
-      colors: ['#c88a3a', '#d99a48', '#b57a2e', '#e8ac5c'] }),
-
-  // shade 2 is the casing edge, 3 the band, 0 the body — see `battery` in stamps.js
-  m({ name: 'Battery', category: CAT.SOLID, density: 4000,
-      corrosionResist: 0.4, conductivity: 0.5, blastResist: 5,
-      conducts: true, emitsCharge: true, chargeDecay: 0,
-      stamp: 'battery',
-      colors: ['#2f7a4f', '#388f5d', '#276641', '#43a46d'] }),
-
+  /*
+   * The circuit-building materials (Wire, Battery, Fuse, Switch, Lamp, Fan) were
+   * removed deliberately: they made this a logic toy as well as a physics one,
+   * and only one of those is the point.
+   *
+   * The charge field stayed, because everything interesting about it is physics
+   * rather than circuitry — current spreading through a water body, resistive
+   * heating boiling brine dry to salt, a charge setting off gunpowder. What it
+   * lost was its only source, so SPARK took that job. A spark lives 8-22 frames,
+   * so you can zap something and watch the consequences, but you cannot wire up a
+   * permanent supply. That is exactly the line we wanted.
+   */
   m({ name: 'Spark', category: CAT.ENERGY, density: 0.15, life: [8, 22],
       emissive: 1, conductivity: 0.4, spawnTemp: 1500,
-      conducts: true, chargeDecay: 2, blastResist: 0,
+      conducts: true, emitsCharge: true, chargeDecay: 2, blastResist: 0,
       colors: ['#9fd0ff', '#ffffff', '#5fa8ff', '#d8ecff'] }),
 
   m({ name: 'Plasma', category: CAT.GAS, density: 0.2, dispersion: 3,
@@ -351,43 +353,9 @@ export const MATERIALS = [
       colors: ['#e0e7ef', '#8fa3b8', '#c2d0de', '#6f8298'] }),
 
   // NOTE: array position IS the material id, so anything added here must go at
-  // the END and its constant above must match. Inserting mid-table renumbers
-  // every material after it and silently rewrites saved scenes.
-
-  // Deliberate weak link. Same current as wire, 50x the resistance, so it heats
-  // under sustained load, glows through the blackbody ramp and finally burns
-  // through. Charge here does not divide across parallel paths the way current
-  // in a real circuit does, so a fuse is a MATERIAL choice rather than a
-  // cross-section — that limitation is real and stated rather than hidden.
-  m({ name: 'Fuse', category: CAT.SOLID, density: 6000,
-      corrosionResist: 0.4, conductivity: 0.3, blastResist: 2,
-      conducts: true, chargeDecay: 1, resistance: 0.2,
-      meltPoint: 1000, meltProduct: EMPTY,
-      colors: ['#b4552f', '#c9663c', '#9c4526', '#d97a4e'] }),
-
-  // Open/closed lives in `aux`, and 0 is closed — so a freshly painted switch
-  // conducts and the circuit you just built works straight away. Shade follows
-  // aux (0/1 closed, 2/3 open) so the state is visible without an overlay.
-  m({ name: 'Switch', category: CAT.SOLID, density: 5000,
-      corrosionResist: 0.5, conductivity: 0.3, blastResist: 3,
-      conducts: true, chargeDecay: 1, resistance: 0.002,
-      colors: ['#7fd4a0', '#9ae6b8', '#3f5f4c', '#33503f'] }),
-
-  // Glow comes from `emissiveShades`, not a shader branch: charge picks the
-  // shade and the shade carries the emissive value into the existing bloom pass.
-  // Works in the Canvas2D fallback too, which has no bloom but does have shades.
-  m({ name: 'Lamp', category: CAT.SOLID, density: 3000,
-      corrosionResist: 0.4, conductivity: 0.3, blastResist: 2,
-      conducts: true, chargeDecay: 1, resistance: 0.003,
-      emissiveShades: [0, 0, 0.85, 1],
-      colors: ['#5a4a2a', '#6b5833', '#ffd98a', '#fff2c8'] }),
-
-  // Blows fluids along its facing while charged. `aux` holds the facing 0..3;
-  // clicking an existing fan with Fan selected rotates it.
-  m({ name: 'Fan', category: CAT.SOLID, density: 2500,
-      corrosionResist: 0.4, conductivity: 0.3, blastResist: 2,
-      conducts: true, chargeDecay: 1, resistance: 0.002,
-      colors: ['#9fb3c8', '#b6c7d8', '#7c8ea1', '#c9d7e4'] }),
+  // the END and its constant above must match. Inserting or REMOVING mid-table
+  // renumbers every material after it and silently rewrites saved scenes — which
+  // is why the scene codec's VERSION was bumped when the circuit family went.
 ];
 
 export const MAT_COUNT = MATERIALS.length;
@@ -402,6 +370,8 @@ export const CORROSION_RESIST = new Float32Array(MAT_COUNT);
 export const FLAMMABILITY = new Float32Array(MAT_COUNT);
 export const LIFE_MIN = new Uint16Array(MAT_COUNT);
 export const LIFE_SPAN = new Uint16Array(MAT_COUNT);
+export const DOUSED_BY_WATER = new Uint8Array(MAT_COUNT);
+export const BUOYANT = new Uint8Array(MAT_COUNT);
 
 export const CONDUCTIVITY = new Float32Array(MAT_COUNT);
 export const SPAWN_TEMP = new Float32Array(MAT_COUNT);
@@ -441,6 +411,8 @@ for (let i = 0; i < MAT_COUNT; i++) {
   FLAMMABILITY[i] = M.flammability;
   LIFE_MIN[i] = M.life[0];
   LIFE_SPAN[i] = Math.max(1, M.life[1] - M.life[0]);
+  DOUSED_BY_WATER[i] = M.dousedByWater ? 1 : 0;
+  BUOYANT[i] = M.buoyant ? 1 : 0;
 
   CONDUCTIVITY[i] = Math.max(0, Math.min(1, M.conductivity));
   SPAWN_TEMP[i] = M.spawnTemp;

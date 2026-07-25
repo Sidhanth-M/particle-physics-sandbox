@@ -1,11 +1,11 @@
 /**
  * Procedural object stamps.
  *
- * Painting Plant, Fungus or Battery with a scatter brush produced a blob of one
- * flat colour — nothing about it read as a plant, a mushroom or a battery. These
- * generators draw the SHAPE instead, and they are functions of brush size rather
- * than hand-authored bitmaps, so one mushroom scales from 3 cells to 30 without
- * a second sprite.
+ * Painting Plant or Fungus with a scatter brush produced a blob of one flat
+ * colour — nothing about it read as a plant or a mushroom. These generators draw
+ * the SHAPE instead, and they are functions of brush size rather than
+ * hand-authored bitmaps, so one mushroom scales from 3 cells to 30 without a
+ * second sprite.
  *
  * Two deliberate constraints:
  *
@@ -19,7 +19,7 @@
  *    dark pair and its stem the pale pair — no MUSHROOM_CAP material required.
  */
 
-import { PLANT, FUNGUS, BATTERY, WIRE, WOOD } from './materials.js';
+import { PLANT, FUNGUS, WOOD } from './materials.js';
 
 /* --------------------------------- plants --------------------------------- */
 
@@ -77,33 +77,6 @@ export function mushroom(cx, cy, size, place) {
   }
 }
 
-/* -------------------------------- hardware -------------------------------- */
-
-/**
- * A battery cell: bodied block with a contrasting band and two wire terminals,
- * so it can be wired into a circuit the way the Circuit Board preset does by
- * hand rather than being a featureless green square.
- */
-export function battery(cx, cy, size, place) {
-  const halfW = Math.max(1, Math.round(size * 0.55));
-  const halfH = Math.max(1, Math.round(size * 0.75));
-
-  for (let dy = -halfH; dy <= halfH; dy++) {
-    for (let dx = -halfW; dx <= halfW; dx++) {
-      const edge = dx === -halfW || dx === halfW || dy === -halfH || dy === halfH;
-      const band = halfH >= 3 && Math.abs(dy) <= halfH - 2 && Math.abs(dy) >= halfH - 3;
-      place(cx + dx, cy + dy, BATTERY, edge ? 2 : band ? 3 : 0);
-    }
-  }
-
-  const ty = Math.max(1, Math.round(halfH * 0.55));
-  const nub = Math.max(1, Math.round(size * 0.35));
-  for (let d = 1; d <= nub; d++) {
-    place(cx + halfW + d, cy - ty, WIRE, 1);
-    place(cx + halfW + d, cy + ty, WIRE, 1);
-  }
-}
-
 /* --------------------------------- scenery --------------------------------- */
 
 /**
@@ -147,10 +120,6 @@ export const STAMPS = {
     span: (s) => 2 * (Math.max(1, Math.round(s * 0.7)) + Math.round(s * 0.12)) + 1,
   },
   mushroom: { draw: mushroom, span: (s) => 2 * Math.max(1, Math.round(s * 0.8)) + 1 },
-  battery: {
-    draw: battery,
-    span: (s) => 2 * Math.max(1, Math.round(s * 0.55)) + 1 + Math.max(1, Math.round(s * 0.35)),
-  },
   tree: { draw: tree, span: (s) => 2 * Math.max(2, Math.round(s * 0.9)) + 1 },
 };
 

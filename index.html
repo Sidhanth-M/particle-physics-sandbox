@@ -58,7 +58,30 @@
       <div id="stage" class="relative w-full">
         <canvas id="sim" width="480" height="300" class="block w-full h-auto cursor-none select-none"></canvas>
         <div id="brushRing"></div>
-        <div id="pausedBadge" class="hidden absolute top-3 left-3 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-amber-400/40 text-[11px] font-bold tracking-[0.2em] uppercase text-amber-300">&#10074;&#10074; Paused</div>
+        <div id="pausedBadge" class="hidden absolute bottom-3 left-3 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-amber-400/40 text-[11px] font-bold tracking-[0.2em] uppercase text-amber-300">&#10074;&#10074; Paused</div>
+
+        <!-- World controls: how you LOOK at the simulation, and the one property
+             that belongs to the world rather than to any cell. Deliberately kept
+             off the material panel, and sat over the canvas so a view change is
+             visible without looking away from it. -->
+        <div id="worldBar" class="absolute top-3 left-3 rounded-lg border border-white/10 bg-black/65 backdrop-blur text-slate-200 select-none">
+          <button id="worldToggle" class="w-full flex items-center gap-2 px-2.5 py-1.5 text-left">
+            <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">World</span>
+            <span id="worldSummary" class="flex-1 text-[11px] font-mono text-amber-300">Normal &middot; 20&deg;C</span>
+            <span id="worldChevron" class="text-[10px] text-slate-500">&#9662;</span>
+          </button>
+          <div id="worldBody" class="px-2.5 pb-2.5 pt-0.5 w-56 flex flex-col gap-2">
+            <div id="viewGrid" class="grid grid-cols-3 gap-1"></div>
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">Room temp</span>
+                <span id="ambientVal" class="px-1.5 py-0.5 rounded bg-white/[0.08] border border-white/10 text-[11px] font-mono text-amber-300">20&deg;C</span>
+              </div>
+              <input id="ambient" type="range" min="-100" max="600" step="5" value="20" class="w-full">
+              <button id="ambientReset" class="mt-1 w-full px-2 py-1 rounded-md border border-white/10 bg-white/[0.04] text-[10px] text-slate-400 hover:bg-white/[0.08] hover:text-white transition">Back to 20&deg;C</button>
+            </div>
+          </div>
+        </div>
         <!-- what is armed, readable without looking away from the canvas -->
         <div id="toolBadge" class="absolute top-3 right-3 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur border border-white/15 text-[11px] font-semibold text-slate-200 flex items-center gap-1.5 pointer-events-none">
           <span id="toolBadgeIcon" class="text-amber-300 flex"></span>
@@ -148,10 +171,6 @@
         <button id="sceneClose" class="w-7 h-7 grid place-items-center rounded-md border border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.08] transition">&#10005;</button>
       </div>
       <div class="panel-scroll flex-1 overflow-y-auto p-3 flex flex-col gap-4">
-        <div>
-          <h3 class="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500 mb-2">View</h3>
-          <div id="viewGrid" class="grid grid-cols-2 gap-1.5"></div>
-        </div>
         <div>
           <div class="flex items-center justify-between mb-1.5">
             <h3 class="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-500">Sim speed</h3>
