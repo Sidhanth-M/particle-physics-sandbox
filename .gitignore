@@ -3,3 +3,6 @@
 
 # Playwright MCP scratch output (snapshots, console logs, screenshots)
 .playwright-mcp/
+
+# Serena MCP server workspace cache
+.serena/
