@@ -6,3 +6,6 @@
 
 # Serena MCP server workspace cache
 .serena/
+
+.vercel
+.env*
